@@ -243,10 +243,13 @@ public:
         BasicBlockInfo *_block
     );
 
+
+std::string getGraphvizBegin(uint32_t _flag);
+std::string getGraphvizJumpTo(unsigned int src, unsigned int dest, bool dstIfTrue, bool cond);
 private:
 
     map<uint32_t, uint32_t> m_exitNodesByHash;
-    std::map<uint32_t, BasicBlockInfo> m_listbasicBlockInfo;
+    std::map<uint32_t, BasicBlockInfo> m_listbasicBlockInfo; // PC=>BlockInfo
     std::map<uint32_t, FunctionDef> m_publicFunctions;
     std::vector<OffsetInfo> m_instructions;
 

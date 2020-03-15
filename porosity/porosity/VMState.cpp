@@ -200,7 +200,7 @@ VMState::executeInstruction(
             StackRegister reg = { "", "", UserInput, 0, 0 };
 
             reg.type = UserInput;
-            uint32_t offset = int(m_stack[0].value);
+            uint32_t offset = uint32_t(m_stack[0].value);
             reg.offset = offset;
 
             if (m_data.size()) {
@@ -208,6 +208,7 @@ VMState::executeInstruction(
                     reg.value = (u256)*(h256 const*)(m_data.data() + (size_t)offset);
                 else if (reg.value >= m_data.size())
                     reg.value = u256(0); // invalid
+                    printf("need paddind zero!\n");
             }
             else {
                 //
@@ -230,7 +231,7 @@ VMState::executeInstruction(
         */
         case Instruction::MSTORE:
         {
-            uint32_t offset = int(GetStackEntryById(0).value);
+            uint32_t offset = uint32_t(GetStackEntryById(0).value);
             setMemoryData(offset, GetStackEntryById(1));
             stringstream argname;
 
@@ -245,7 +246,7 @@ VMState::executeInstruction(
             popStack();
             popStack();
 
-            m_stack[0].name = argname.str();
+            //m_stack[0].name = argname.str(); // lixp: ???
         }
         break;
         case Instruction::SSTORE:
@@ -255,7 +256,7 @@ VMState::executeInstruction(
         break;
         case Instruction::MLOAD:
         {
-            uint32_t offset = int(GetStackEntryById(0).value);
+            uint32_t offset = uint32_t(GetStackEntryById(0).value);
             StackRegister *reg = getMemoryData(offset);
             stringstream argname;
             if (reg && reg->type & StorageType) {
@@ -272,7 +273,7 @@ VMState::executeInstruction(
         case Instruction::SLOAD:
         {
             stringstream argname;
-            uint32_t offset = int(m_stack[0].value);
+            uint32_t offset = uint32_t(m_stack[0].value);
             argname << "store_";
             argname << std::hex << offset;
 
@@ -508,6 +509,34 @@ VMState::executeInstruction(
             popStack(); // info.ret
             break;
         }
+        case Instruction::XOR:
+        {
+            m_stack[0].value = m_stack[0].value ^ m_stack[1].value;
+            m_stack[1] = m_stack[0];
+            popStack(); // info.ret
+            break;
+        }
+        case Instruction::SHL:
+        {
+            if(m_stack[1].value > 255)
+                m_stack[0].value = 0;
+            else
+                m_stack[0].value = m_stack[0].value << (uint8_t)m_stack[1].value;
+            m_stack[1] = m_stack[0];
+            popStack(); // info.ret
+            break;
+        }
+        case Instruction::SHR:
+        {
+            if(m_stack[1].value > 255)
+                m_stack[0].value = 0;
+            else
+                m_stack[0].value = m_stack[0].value << (uint8_t)m_stack[1].value;
+            m_stack[0].value = m_stack[0].value >> (uint8_t)m_stack[1].value;
+            m_stack[1] = m_stack[0];
+            popStack(); // info.ret
+            break;
+        }
         case Instruction::EQ:
             // change name
             // change labeltype
@@ -557,7 +586,7 @@ VMState::executeInstruction(
             // printf("JUMP: stack.size() = 0x%x\n", m_stack.size());
             // printf("JUMP: target = 0x%x\n", int(m_stack[0].value));
             if (m_stack.size()) {
-                m_eip = int(m_stack[0].value);
+                m_eip = uint32_t(m_stack[0].value);
                 popStack();
             }
             return true;
@@ -782,8 +811,8 @@ VMState::executeBlock(
                     break;
                 }
 
-                if ((opcde->stack.size() && (opcde->stack[0].value != _block->dstDefault)) || (_block->dstDefault == int(NODE_DEADEND))) {
-                    uint32_t newDest = int(opcde->stack[0].value);
+                if ((opcde->stack.size() && (opcde->stack[0].value != _block->dstDefault)) || (_block->dstDefault == uint32_t(NODE_DEADEND))) {
+                    uint32_t newDest = uint32_t(opcde->stack[0].value);
                     if (g_VerboseLevel >= 2) printf("ERR: Invalid destionation. (0x%08X -> 0x%08X)\n", _block->dstDefault, newDest);
                     _block->dstDefault = newDest;
                     _block->nextDefault = getBlockAt(newDest);
@@ -796,7 +825,7 @@ VMState::executeBlock(
                 }
 
                 if ((opcde->stack.size() && opcde->stack[0].value != _block->dstJUMPI)) {
-                    uint32_t newDest = int(opcde->stack[0].value);
+                    uint32_t newDest = uint32_t(opcde->stack[0].value);
                     if (g_VerboseLevel >= 2) printf("ERR: Invalid destionation. (0x%08X -> 0x%08X)\n", _block->dstJUMPI, newDest);
                     _block->dstJUMPI = newDest;
                     _block->nextJUMPI = getBlockAt(newDest);
@@ -950,7 +979,7 @@ InstructionContext::getContextForInstruction(
         {
             if (g_VerboseLevel >= 6) {
                 stringstream argname;
-                uint32_t offset = int(first->value);
+                uint32_t offset = uint32_t(first->value);
                 argname << "arg_";
                 argname << std::hex << offset;
 
@@ -1091,7 +1120,7 @@ InstructionContext::getContextForInstruction(
             stringstream argname;
             string var_name;
 
-            uint32_t offset = int(first->value);
+            uint32_t offset = uint32_t(first->value);
             argname << "store_";
             argname << std::hex << offset;
 
@@ -1107,7 +1136,7 @@ InstructionContext::getContextForInstruction(
         case Instruction::MSTORE:
         {
             stringstream argname;
-            uint32_t offset = int(first->value);
+            uint32_t offset = uint32_t(first->value);
             argname << "memory[0x";
             argname << std::hex << offset;
             argname << "]";
@@ -1134,8 +1163,8 @@ InstructionContext::getContextForInstruction(
         }
         case Instruction::SHA3:
         {
-            uint64_t offset = int(first->value);
-            uint64_t size = int(second->value);
+            uint64_t offset = uint64_t(first->value);
+            uint64_t size = uint64_t(second->value);
             // stack[0] = sha3(memStorage + offset, size);
 
     #if (g_VerboseLevel >= 6)
@@ -1176,7 +1205,7 @@ InstructionContext::getContextForInstruction(
             return false;
             break;
     }
-
+    //std::cout << "exp: " << exp << std::endl;
     if (exp.size()) m_exp = exp;
 
     return true;

@@ -72,10 +72,11 @@ Contract::enumerateInstructionsAndBlocks(
 
     addBasicBlock(NODE_DEADEND, 0); // ExitNode to be resolved later.
     addBasicBlock(0x0, 0); // EntryPoint
-
+    bool dataRegion = false;
     // Collect all the basic blocks.
     dev::eth::eachInstruction(m_byteCodeRuntime, [&](uint32_t _offset, Instruction _instr, u256 const& _data) {
-
+        if(dataRegion)
+            return;
         //
         // Indexing each instruction, to be able to retro execute instructions.
         //
@@ -90,36 +91,63 @@ Contract::enumerateInstructionsAndBlocks(
         //
         // Collecting the list of basic blocks.
         //
-        if (_instr == Instruction::JUMPDEST) {
-            addBasicBlock(_offset, 0);
+        switch (_instr) {
+            case Instruction::JUMPDEST:
+                addBasicBlock(_offset, 0);
+                break;
+            case Instruction::INVALID:
+                addBasicBlock(_offset, m_byteCodeRuntime.size()-_offset)->second.dataBlock = true;
+                dataRegion = true;
+                break;
+            default:
+                break;
         }
     });
 }
 
+void ExecInstSimple(BasicBlockInfo* block, const OffsetInfo* info){
+    if(info->inst > Instruction::PUSH1 && info->inst < Instruction::PUSH32){
+        block->stack.push_back(StackRegister{.type = 0x00, .value = info->data});
+        return;
+    }
+    if(info->inst > Instruction::DUP1 && info->inst < Instruction::DUP16){
+        int offset = block->stack.size() - ((int)info->inst - (int)Instruction::DUP1) - 1;
+        block->stack.push_back(block->stack[offset]);
+        return;
+    }
+    if(info->inst > Instruction::SWAP1 && info->inst < Instruction::SWAP16){
+        auto last = block->stack.back();
+        int offset = block->stack.size() - ((int)info->inst - (int)Instruction::DUP1) - 2;
+        block->stack[block->stack.size()-1] = block->stack[offset];
+        block->stack[offset] = last;
+        return;
+    }
+    for(int i = 0; i < info->instInfo.args; i++)
+        block->stack.push_back(StackRegister{.type = 0xff,});
+    for(int i = 0; i < info->instInfo.ret; i++)
+        block->stack.pop_back();
+}
+
+std::string g_str;
 void
 Contract::assignXrefToBlocks(
     void
 )
 {
-    
+    // 建立连接，调用者<-被调用者
     //
     // Attributing the XREF
     //
 
     uint32_t basicBlockOffset = 0;
-
     for (uint32_t instIndex = 0; instIndex < m_instructions.size(); instIndex++) {
         OffsetInfo *currentOffInfo = &m_instructions[instIndex];
         uint32_t currentOffset = currentOffInfo->offset;
 
-        uint32_t currentEndOffset;
-        if ((instIndex + 1) < m_instructions.size()) {
-            OffsetInfo *next = &m_instructions[instIndex + 1];
-            currentEndOffset = next->offset;
-        }
-        else {
-            currentEndOffset = m_byteCodeRuntime.size();
-        }
+        uint32_t currentEndOffset = m_byteCodeRuntime.size();;
+        if ((instIndex + 1) < m_instructions.size())
+            currentEndOffset = m_instructions[instIndex + 1].offset;
+
         uint32_t currentBlockSize = currentOffset - basicBlockOffset;
         uint32_t nextInstrBlockSize = currentEndOffset - basicBlockOffset;
 
@@ -144,17 +172,18 @@ Contract::assignXrefToBlocks(
                     // The "RETURN" basic block address is pushed at the beginning of functions.
                     // assert (m_listbasicBlockInfo.find(basicBlockOffset)->second.abiName)
                     OffsetInfo *next = &m_instructions[instIndex + 1];
-                    if ((next->inst == Instruction::PUSH1) ||
+                    if ((next->inst == Instruction::PUSH1) || // deal paybale
                         (next->inst == Instruction::PUSH2)) {
                         u256 data = next->data;
-                        uint32_t jmpDest = int(data);
+                        uint32_t jmpDest = uint32_t(data);
                         //
                         // addBlockReference((uint32_t)jmpDest, basicBlockOffset, false, ExitNode);
                         // tagBasicBlockWithHashtag(jmpDest, it->second.fnAddrHash);
-                        m_exitNodesByHash.insert(m_exitNodesByHash.begin(), pair<uint32_t, uint32_t>(it->second.fnAddrHash, jmpDest));
+                        // m_exitNodesByHash.insert(m_exitNodesByHash.begin(), pair<uint32_t, uint32_t>(it->second.fnAddrHash, jmpDest));
                     }
                 }
                 else if (instIndex > 0) {
+                    // 处理自动衔接的JUMPDEST?
                     //auto prevInst = instruction;
                     //--prevInst;
                     OffsetInfo *prev = &m_instructions[instIndex - 1];
@@ -163,6 +192,7 @@ Contract::assignXrefToBlocks(
                     if ((prev->inst != Instruction::STOP) &&
                         (prev->inst != Instruction::RETURN) &&
                         (prev->inst != Instruction::SUICIDE) &&
+                        (prev->inst != Instruction::REVERT) &&
                         (prev->inst != Instruction::JUMP) &&
                         (prev->inst != Instruction::JUMPI) &&
                         (prev->inst != Instruction::JUMPC) &&
@@ -179,9 +209,28 @@ Contract::assignXrefToBlocks(
                 setBlockSize(basicBlockOffset, nextInstrBlockSize);
                 break;
             }
+            case Instruction::SUICIDE:
+            {
+                tagBasicBlock(basicBlockOffset, "SUICIDE");
+                setBlockSize(basicBlockOffset, nextInstrBlockSize);
+                break;
+            }
+            case Instruction::REVERT:
+            {
+                tagBasicBlock(basicBlockOffset, "REVERT");
+                setBlockSize(basicBlockOffset, nextInstrBlockSize);
+                break;
+            }
             case Instruction::RETURN:
             {
                 tagBasicBlock(basicBlockOffset, "RETURN");
+                setBlockSize(basicBlockOffset, nextInstrBlockSize);
+                break;
+            }
+            case Instruction::INVALID:
+            {
+                basicBlockOffset = currentOffset;
+                tagBasicBlock(basicBlockOffset, "INVALID");
                 setBlockSize(basicBlockOffset, nextInstrBlockSize);
                 break;
             }
@@ -194,18 +243,21 @@ Contract::assignXrefToBlocks(
                     if ((prev->inst == Instruction::PUSH1) ||
                         (prev->inst == Instruction::PUSH2)) {
                         u256 data = prev->data;
-                        uint32_t jmpDest = int(data);
+                        uint32_t jmpDest = uint32_t(data);
 
-                        for (uint32_t j = 0; (instIndex >= j) && (j < 5); j += 1) {
+                        for (uint32_t j = 0; (j <= instIndex) && (j < 5); j += 1) {
                             OffsetInfo *offFnHash = &m_instructions[instIndex - j];
 
                             if (offFnHash->inst == Instruction::PUSH4) {
                                 u256 data = offFnHash->data;
-                                fnAddrHash = int(data & 0xFFFFFFFF);
+                                fnAddrHash = uint32_t(data & 0xFFFFFFFF);
                             }
                         }
-
                         addBlockReference((uint32_t)jmpDest, basicBlockOffset, nextInstrBlockSize, fnAddrHash, ConditionalNode);
+                    }else{
+                        // should not be happend
+                        printf("JumpIf to Deadnode: %x %x %d\n", currentOffInfo->offset, basicBlockOffset, nextInstrBlockSize);
+                        addBlockReference(uint32_t(NODE_DEADEND), basicBlockOffset, nextInstrBlockSize, false, ExitNode);
                     }
                     if (g_VerboseLevel >= 3) printf("%s: function @ 0x%08X (hash = 0x%08x)\n",
                         __FUNCTION__, basicBlockOffset, fnAddrHash);
@@ -219,7 +271,7 @@ Contract::assignXrefToBlocks(
                     if (next->inst != Instruction::JUMPDEST) {
                         // We need to add this new basic block.
                         // printf("JUMPDEST: 0x%08X\n", _offset);
-                        addBasicBlock(next->offset, nextInstrBlockSize);
+                        addBasicBlock(basicBlockOffset, nextInstrBlockSize); // lixp: nextInstrBlockSize? 0!
                     }
                     addBlockReference(next->offset, prevBasicBlockOffset, nextInstrBlockSize, false, RegularNode);
                 }
@@ -227,19 +279,18 @@ Contract::assignXrefToBlocks(
             }
             case Instruction::JUMP:
             {
-                if ((instIndex > 0)) {
+                if (instIndex > 0) {
                     OffsetInfo *prev = &m_instructions[instIndex - 1];
 
                     if ((prev->inst == Instruction::PUSH1) ||
                         (prev->inst == Instruction::PUSH2)) {
                         u256 data = prev->data;
-                        uint32_t jmpDest = int(data);
+                        uint32_t jmpDest = uint32_t(data);
                         addBlockReference((uint32_t)jmpDest, basicBlockOffset, nextInstrBlockSize, false, RegularNode);
                     }
                     else {
-                        u256 data = prev->data;
-                        uint32_t exitBlock = int(data);
-                        addBlockReference(int(NODE_DEADEND), basicBlockOffset, nextInstrBlockSize, false, ExitNode);
+                        printf("Jump to Deadnode: %x %x %d\n", currentOffInfo->offset, basicBlockOffset, nextInstrBlockSize);
+                        addBlockReference(uint32_t(NODE_DEADEND), basicBlockOffset, nextInstrBlockSize, false, ExitNode);
                         // addBlockReference(exitBlock, basicBlockOffset, false, ExitNode);
                     }
                 }
@@ -252,17 +303,29 @@ Contract::assignXrefToBlocks(
         }
     }
 
+    addInstructionsToBlocks();
     //
     // Reconnect to exit nodes.
     //
+    g_str = getGraphvizBegin(false);
     for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func) {
         auto refs = func->second.references;
         uint32_t hash = func->second.fnAddrHash;
-        if (!hash) continue;
+        if (!hash) continue; // only walk in public func
 
+        for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func){
+            func->second.stack.clear();
+            func->second.walkedNode = false;
+        }
+
+        const OffsetInfo& off = OffsetInfo{
+            .inst = Instruction::PUSH4,
+            .data = hash,
+        };
+        ExecInstSimple(&func->second, &off);
         walkAndConnectNodes(hash, func->first);
     }
-
+    //std::cout << g_str << '}' << std::endl;
     m_listbasicBlockInfo.erase(m_listbasicBlockInfo.find(NODE_DEADEND));
 }
 
@@ -277,7 +340,6 @@ Contract::getBasicBlocks(
 
     assignXrefToBlocks();
 
-    addInstructionsToBlocks();
     computeDominators();
 
     return;
@@ -288,6 +350,7 @@ Contract::computeDominators(
     void
 ) {
     int nBlocks = m_listbasicBlockInfo.size();
+    if (nBlocks > 256) printf("nBlocks(%d) > 256!\n", nBlocks);
     uint32_t i = 0;
 
     for (auto block = m_listbasicBlockInfo.begin();
@@ -320,7 +383,8 @@ Contract::computeDominators(
                     T |= block->second.dominators;
 
                     BasicBlockInfo *predBlock = getBlockAt(pred->first);
-                    if (!predBlock) break;
+                    if (!predBlock){ printf("why?\n"); break;}
+                    // CFG 程序流图 支配关系 ???
                     block->second.dominators &= predBlock->dominators;
                     block->second.dominators |= (1 << block->second.id);
 
@@ -371,28 +435,96 @@ Contract::getInstructionIndexAtOffset(
     return instIndex;
 }
 
+
+string
+Contract::getGraphvizBegin(
+    uint32_t _flag
+)
+{
+
+    string graph;
+
+    graph = "digraph porosity {\n";
+    graph += "rankdir = TB;\n";
+    graph += "size = \"12\"\n";
+    graph += "graph[fontname = Courier, fontsize = 10.0, labeljust = l, nojustify = true];";
+    graph += "node[shape = record];\n";
+
+    for (auto it = m_listbasicBlockInfo.begin(); it != m_listbasicBlockInfo.end(); ++it) {
+        uint32_t source = it->first;
+        string source_str = porosity::to_hstring(source);
+        uint32_t dstIfTrue = it->second.dstJUMPI;
+        string ifTrue_str = porosity::to_hstring(dstIfTrue);
+        uint32_t dstDefault = it->second.dstDefault;
+        string dstDefault_str = porosity::to_hstring(dstDefault);
+        uint32_t symbolHash = it->second.fnAddrHash;
+        string symbolName = symbolHash ? getFunctionName(symbolHash) : "loc_" + porosity::to_hstring(source);
+        string optLabelName = symbolHash ? ",label=\""+symbolName+"\"" : "";
+        string defaultColor = dstIfTrue ? "red" : "black";
+        uint32_t basicBlockSize = it->second.size;
+
+        bytes subBlockCode(m_byteCodeRuntime.begin() + source, m_byteCodeRuntime.begin() + source + basicBlockSize);
+
+        string basicBlockCode;
+        if (_flag)
+            basicBlockCode = porosity::buildNode(subBlockCode, source);
+        else
+            basicBlockCode = symbolName;
+
+        graph += "    \"" + source_str + "\"" "[label = \"" + basicBlockCode + "\"];\n";
+    }
+    return graph;
+}
+
+string
+Contract::getGraphvizJumpTo(unsigned int src, unsigned int dest, bool dstIfTrue, bool cond) {
+        string graph;
+        string source_str = porosity::to_hstring(src);
+        string dest_str = porosity::to_hstring(dest);
+        uint32_t symbolHash = m_listbasicBlockInfo[src].fnAddrHash;
+        string symbolName = symbolHash ? getFunctionName(symbolHash) : "loc_" + porosity::to_hstring(src);
+        string optLabelName = symbolHash ? ",label=\""+symbolName+"\"" : "";
+        string defaultColor = dstIfTrue ? "red" : "black";
+        if (!cond) {
+            graph += "    \"" + source_str + "\"" + " -> " + "\"" + dest_str + "\"" + " [color=\""+ defaultColor +"\"];\n";
+        }else {
+            graph += "    \"" + source_str + "\"" + " -> " + "\"" + dest_str + "\"" +
+                     " [color=\"green\"" + optLabelName + "];\n";
+        }
+        return graph;
+}
+
 void
 Contract::walkAndConnectNodes(
     uint32_t _hash,
     uint32_t _block
 )
 {
+    //printf("_hash:%08x block:%08x\n", _hash, _block);
     //
     uint32_t next = _block;
     while (true) {
         auto block = m_listbasicBlockInfo.find(next); // getBlockAt()
-        if (block == m_listbasicBlockInfo.end()) break;
+        if (block == m_listbasicBlockInfo.end()){
+            printf("block not found:%08x\n", next);
+            break;
+        }
         next = block->second.dstDefault;
-		if (block->second.walkedNode) continue;
+		if (block->second.walkedNode) break;
+        block->second.walkedNode = true;
 
         // printf("hash = 0x%x, block = 0x%x, default = 0x%x, JUMPI = 0x%x\n", _hash, _block, block->second.dstDefault, block->second.dstJUMPI);
-        if (block->second.dstJUMPI) {
-            block->second.walkedNode = true;
+        bool jumpIf = false;
+        if (block->second.dstJUMPI){
+            jumpIf = true;
+            g_str += getGraphvizJumpTo(block->first, block->second.dstJUMPI, true, true);
             walkAndConnectNodes(_hash, block->second.dstJUMPI);
         }
 
         if (!next) break;
+        g_str += getGraphvizJumpTo(block->first, next, jumpIf, false);
         if (next == NODE_DEADEND) {
+            printf("next == NODE_DEADEND\n");
             auto exitNode = m_exitNodesByHash.find(_hash); // getBlockAt()
             if (exitNode != m_exitNodesByHash.end()) {
                 block->second.dstDefault = exitNode->second;
@@ -483,6 +615,8 @@ Contract::addBlockReference(
        it->second.references.insert(it->second.references.begin(), pair<uint32_t, Xref>(_src, ref));
        it->second.fnAddrHash = _fnAddrHash;
        srcRefAdded = true;
+   }else{
+       printf("XREF DEST node not found: %08x\n", _block);
    }
 
    //
@@ -704,7 +838,7 @@ Contract::setABI(
     printf("Attempting to parse ABI definition...\n");
     if (g_VerboseLevel >= 5)  printf("%s\n", abi.c_str());
     m_abi_json = nlohmann::json::parse(abi.c_str());
-    printf("Success.\n");
+    printf("parse ABI Success.\n");
 
     for (nlohmann::json entry : m_abi_json) {
         string name = "";
@@ -1073,7 +1207,7 @@ Contract::decompile(
 
     BasicBlockInfo *block = getBlockAt(offset);
     newState.executeFunction(block); // get stack status
-    computeDominators();
+    computeDominators(); // again? or just repeat?
 
     do {
         decompileBlock(&decompiled_code, 2, block);
@@ -1105,6 +1239,8 @@ Contract::IsRuntimeCode(
         // porosity::printInstruction(_offset, _instr, _data);
 
         if (leaveFunction) {
+            if(_instr == Instruction::INVALID)  // skip 'INVALID'
+                return;
             if (hasCODECOPY && !m_runtimeOffset) {
                 if (_instr == Instruction::STOP) return;
                 m_runtimeOffset = _offset;

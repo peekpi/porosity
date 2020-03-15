@@ -44,6 +44,9 @@ static const std::map<Instruction, InstructionInfo> c_instructionInfo =
     { Instruction::OR,           { "OR",             0,     2,    1,  false,       Tier::VeryLow } },
     { Instruction::XOR,          { "XOR",            0,     2,    1,  false,       Tier::VeryLow } },
     { Instruction::BYTE,         { "BYTE",           0,     2,    1,  false,       Tier::VeryLow } },
+    { Instruction::SHL,          { "SHL",            0,     2,    1,  false,       Tier::VeryLow } },
+    { Instruction::SHR,          { "SHR",            0,     2,    1,  false,       Tier::VeryLow } },
+    //{ Instruction::SAR,          { "SAR",            0,     2,    1,  false,       Tier::VeryLow } },
     { Instruction::ADDMOD,       { "ADDMOD",         0,     3,    1,  false,       Tier::Mid } },
     { Instruction::MULMOD,       { "MULMOD",         0,     3,    1,  false,       Tier::Mid } },
     { Instruction::SIGNEXTEND,   { "SIGNEXTEND",     0,     2,    1,  false,       Tier::Low } },
@@ -224,7 +227,7 @@ void dev::eth::eachInstruction(
         if (isValidInstruction(instr))
             additional = instructionInfo(instr).additional;
         else {
-            // printf("Invalid instruction. Aborting...\n");
+            printf("Invalid instruction(%x:0x%02x). Aborting... size:%d\n", std::distance(_mem.begin(), it), instr, _mem.size());
             return;
         }
 

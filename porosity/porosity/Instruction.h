@@ -53,7 +53,9 @@ namespace dev
             XOR,                ///< bitwise XOR operation
             NOT,                ///< bitwise NOT operation
             BYTE,               ///< retrieve single byte from word
-
+            SHL,                ///< bit Shift Left
+            SHR,                ///< bit Shift Right
+            //SAR,                ///< logical Shift Right lixp:don't support
             SHA3 = 0x20,        ///< compute SHA3-256 hash
 
             ADDRESS = 0x30,     ///< get address of currently executing account

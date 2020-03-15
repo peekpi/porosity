@@ -150,8 +150,8 @@ typedef struct _BasicBlockInfo
     _BasicBlockInfo *nextDefault;
     _BasicBlockInfo *nextJUMPI;
 
-    uint32_t dstDefault;
-    uint32_t dstJUMPI;
+    uint32_t dstDefault; // 衔接dest或者if-else
+    uint32_t dstJUMPI; // if-go
 
 
     uint32_t hashtag;
@@ -168,7 +168,8 @@ typedef struct _BasicBlockInfo
 
     uint32_t Flags;
     uint32_t InheritFlags;
-
+    bool dataBlock;
+    vector<StackRegister> stack;
 } BasicBlockInfo;
 
 
