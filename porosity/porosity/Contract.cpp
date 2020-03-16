@@ -113,10 +113,7 @@ uint32_t ExecInstSimple(BasicBlockInfo* block){
     //printf("ExecInstSimple-Start: %x(%d) stack: %d size:%d\n", block->offset,block->offset, block->stack.size(), block->size);
     for (auto it = block->instructions.begin(); it != block->instructions.end(); it++){
         //printf("exec: %d:%x %s %d\n", it->offInfo.offset, it->offInfo.inst, it->offInfo.instInfo.name.c_str(), block->stack.size());
-        const OffsetInfo* info = &it->offInfo;
-        if(block->stack.size() == 0){
-            printf("stack is empty!\n");
-        }     
+        const OffsetInfo* info = &it->offInfo;   
         if(info->inst >= Instruction::PUSH1 && info->inst <= Instruction::PUSH32){
             block->stack.push_back(StackRegister{.type = 0x88, .value = info->data});
             continue;
@@ -148,9 +145,6 @@ uint32_t ExecInstSimple(BasicBlockInfo* block){
         for(int i = 0; i < info->instInfo.ret; i++)
             block->stack.push_back(StackRegister{.type = 0xff});
             //block->stack.push_back(StackRegister{.name=info->instInfo.name,.type = 0xff,.offset=info->offset});
-    }
-    if(block->stack.size() == 0){
-        printf("stack is empty2!\n");
     }
     //printf("ExecInstSimple-End: stack: %d\n", block->stack.size());
     return ret;
@@ -331,7 +325,7 @@ Contract::assignXrefToBlocks(
                         addBlockReference((uint32_t)jmpDest, basicBlockOffset, nextInstrBlockSize, false, RegularNode);
                     }
                     else {
-                        printf("Jump to Deadnode: %x %x %d\n", currentOffInfo->offset, basicBlockOffset, nextInstrBlockSize);
+                        //printf("Jump to Deadnode: %x %x %d\n", currentOffInfo->offset, basicBlockOffset, nextInstrBlockSize);
                         addBlockReference(uint32_t(NODE_DEADEND), basicBlockOffset, nextInstrBlockSize, false, ExitNode);
                         // addBlockReference(exitBlock, basicBlockOffset, false, ExitNode);
                     }
@@ -349,6 +343,10 @@ Contract::assignXrefToBlocks(
     //
     // Reconnect to exit nodes.
     //
+#if 1
+    vector<StackRegister> envStack;
+    walkAndConnectNodes(0, 0, &envStack);
+#else
     g_str = getGraphvizBegin(false);
     for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func) {
         auto refs = func->second.references;
@@ -364,16 +362,23 @@ Contract::assignXrefToBlocks(
         //ExecInstSimple(&func->second);
         walkAndConnectNodes(hash, func->first, &envStack);
     }
+#endif
     //std::cout << g_str << '}' << std::endl;
     m_listbasicBlockInfo.erase(m_listbasicBlockInfo.find(NODE_DEADEND));
     // if xxx else invalid
 
     auto rootEntry = getBlockAt(0);
     traverseBlock(rootEntry);
+    int orphan = 0;
     for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func) {
-        if(!func->second.walkedNode)
+        if(!func->second.walkedNode){
             printf("orphan node: %x %s\n", func->second.offset, func->second.name.c_str());
+            orphan++;
+        }
+        m_listbasicBlockInfo.erase(func);
     }
+    if(orphan>1)
+        printf("the contract may have Inline Assembly\n");
 }
 
 void
@@ -595,9 +600,8 @@ Contract::walkAndConnectNodes(
             //    printf("JumpI DeatNode!\n");
             if (dest != 0)
             {
-                if(dest != next){
-                    printf("found different dest:%x(%d) %x(%d)\n", dest, dest, next, next);
-                }
+                //if(dest != next)
+                //    printf("found different dest:%x(%d) %x(%d)\n", dest, dest, next, next);
                 
                 addBlockReference(dest, block->first, block->second.size, block->second.fnAddrHash, ProxyNode);
                 // addreference
@@ -685,8 +689,8 @@ Contract::addBlockReference(
    auto it = m_listbasicBlockInfo.find(_block);
    if (it != m_listbasicBlockInfo.end()) {
        Xref ref = { _src, _conditional };
-       if(it->second.references.find(_src) != it->second.references.end())
-          printf("addBlockReference repeat: %x=>%x\n", _src, _block);
+       //if(it->second.references.find(_src) != it->second.references.end())
+       //   printf("addBlockReference repeat: %x=>%x\n", _src, _block);
        it->second.references.insert(it->second.references.begin(), pair<uint32_t, Xref>(_src, ref));
        it->second.fnAddrHash = _fnAddrHash;
        srcRefAdded = true;
