@@ -71,7 +71,8 @@ typedef enum _ConditionAttribute {
 typedef enum _NodeType {
     RegularNode = 0x0,
     ConditionalNode = 0x1,
-    ExitNode = 0x2
+    ProxyNode = 0x2,
+    ExitNode = 0x3,
 } NodeType;
 
 typedef enum _CallFunctionType {
@@ -125,6 +126,11 @@ typedef struct _StackRegister {
     uint32_t lastModificationPC;
     u256 value;
     ConditionAttribute cond;
+    public:
+
+    bool operator==(_StackRegister const& cmp) const{
+        return type==cmp.type && value==cmp.value;
+    }
 } StackRegister;
 
 typedef struct _InstructionState {
@@ -149,9 +155,12 @@ typedef struct _BasicBlockInfo
 
     _BasicBlockInfo *nextDefault;
     _BasicBlockInfo *nextJUMPI;
+    std::map<uint32_t, _BasicBlockInfo*> nextProxy;
+    vector<vector<StackRegister>> entryStack; // when entry this Block, if caller.stack in callerStack then skip
 
     uint32_t dstDefault; // 衔接dest或者if-else
     uint32_t dstJUMPI; // if-go
+    vector<uint32_t> dstProxy;
 
 
     uint32_t hashtag;

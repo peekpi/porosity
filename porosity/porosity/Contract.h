@@ -31,7 +31,7 @@ public:
         else {
             // In the case IsRuntimeCode() didn't return the offset we move on.
             if (!m_runtimeOffset) return;
-
+            printf("m_runtimeOffset:%d\n", m_runtimeOffset);
             bytes runtimeCode(bytecode.begin() + m_runtimeOffset, bytecode.end());
             m_byteCodeRuntime = runtimeCode;
         }
@@ -77,7 +77,8 @@ public:
     void
     walkAndConnectNodes(
         uint32_t _hash,
-        uint32_t _block
+        uint32_t _block,
+        const vector<StackRegister>* calleeStack
     );
 
     bool
@@ -187,7 +188,8 @@ public:
 
     string
     getGraphviz(
-        uint32_t _flag
+        uint32_t _flag,
+        bool skipRevert = false
     );
 
     void

@@ -19,6 +19,7 @@ Revision History:
 #include <sstream>
 #include <map>
 #include <vector>
+#include <algorithm>
 #include <boost/dynamic_bitset.hpp>
 
 #include <boost/property_tree/ptree.hpp>

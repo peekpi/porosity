@@ -28,6 +28,7 @@ namespace porosity {
     ) {
         stringstream stream;
 
+        stream << "("<<_offset<<")";
         stream << "0x"
             << std::setfill('0') << std::setw(sizeof(_offset) * 2)
             << std::hex << _offset;

@@ -63,6 +63,7 @@ typedef struct _Arguments {
 
     bool debugMode;
     bool noHeader;
+    bool skipCfgRevert;
 } Arguments;
 
 bool
@@ -154,6 +155,16 @@ parse(
             out->method |= MethodSingleStepping;
             g_SingleStepping = true;
         }
+        else if ((kw == "--cfg-skip")) {
+            out->method |= MethodControlFlowGraph;
+            out->noHeader = true;
+            out->skipCfgRevert = true;
+        }
+        else if ((kw == "--cfg-full-skip")) {
+            out->method |= MethodControlFlowGraphFull;
+            out->noHeader = true;
+            out->skipCfgRevert = true;
+        }
         else if ((kw == "--cfg")) {
             out->method |= MethodControlFlowGraph;
             out->noHeader = true;
@@ -238,11 +249,11 @@ int main(
     contract.setData(args.arguments);
 
     if (args.method & MethodControlFlowGraph) {
-        printf("%s\n", contract.getGraphviz(false).c_str());
+        printf("%s\n", contract.getGraphviz(false, args.skipCfgRevert).c_str());
         return SUCCESS;
     }
     else if (args.method & MethodControlFlowGraphFull) {
-        printf("%s\n", contract.getGraphviz(true).c_str());
+        printf("%s\n", contract.getGraphviz(true, args.skipCfgRevert).c_str());
         return SUCCESS;
     }
 

@@ -96,36 +96,73 @@ Contract::enumerateInstructionsAndBlocks(
                 addBasicBlock(_offset, 0);
                 break;
             case Instruction::INVALID:
-                addBasicBlock(_offset, m_byteCodeRuntime.size()-_offset)->second.dataBlock = true;
-                dataRegion = true;
+                addBasicBlock(_offset, 0)->second.dataBlock = true;
+                if(memcmp(&m_byteCodeRuntime[_offset+3], "bzzr0", 5) == 0)
+                    dataRegion = true;
                 break;
             default:
                 break;
         }
     });
+    if(!dataRegion) printf("No data region!\n");
 }
 
-void ExecInstSimple(BasicBlockInfo* block, const OffsetInfo* info){
-    if(info->inst > Instruction::PUSH1 && info->inst < Instruction::PUSH32){
-        block->stack.push_back(StackRegister{.type = 0x00, .value = info->data});
-        return;
+uint32_t ExecInstSimple(BasicBlockInfo* block){
+    uint32_t ret = 0;
+    if(block->dataBlock) return ret;
+    //printf("ExecInstSimple-Start: %x(%d) stack: %d size:%d\n", block->offset,block->offset, block->stack.size(), block->size);
+    for (auto it = block->instructions.begin(); it != block->instructions.end(); it++){
+        //printf("exec: %d:%x %s %d\n", it->offInfo.offset, it->offInfo.inst, it->offInfo.instInfo.name.c_str(), block->stack.size());
+        const OffsetInfo* info = &it->offInfo;
+        if(block->stack.size() == 0){
+            printf("stack is empty!\n");
+        }     
+        if(info->inst >= Instruction::PUSH1 && info->inst <= Instruction::PUSH32){
+            block->stack.push_back(StackRegister{.type = 0x88, .value = info->data});
+            continue;
+        }
+        if(info->inst >= Instruction::DUP1 && info->inst <= Instruction::DUP16){
+            int offset = block->stack.size() - ((int)info->inst - (int)Instruction::DUP1) - 1;
+            block->stack.push_back(block->stack[offset]);
+            continue;
+        }
+        if(info->inst >= Instruction::SWAP1 && info->inst <= Instruction::SWAP16){
+            auto last = block->stack.back();
+            int offset = block->stack.size() - ((int)info->inst - (int)Instruction::SWAP1) - 2;
+            block->stack[block->stack.size()-1] = block->stack[offset];
+            block->stack[offset] = last;
+            continue;
+        }
+        if(info->inst == Instruction::JUMP)// || info->inst == Instruction::JUMPI)
+        {
+            auto dest = block->stack.back();
+            if(dest.type == 0x88)
+                ret = (uint32_t)dest.value;
+            else
+                printf("dest type %d:%x %s\n", dest.offset, dest.type, dest.name.c_str());
+            if(it+1 != block->instructions.end())
+                printf("wrong iterator!\n");
+        }
+        for(int i = 0; i < info->instInfo.args; i++)
+            block->stack.pop_back();
+        for(int i = 0; i < info->instInfo.ret; i++)
+            block->stack.push_back(StackRegister{.type = 0xff});
+            //block->stack.push_back(StackRegister{.name=info->instInfo.name,.type = 0xff,.offset=info->offset});
     }
-    if(info->inst > Instruction::DUP1 && info->inst < Instruction::DUP16){
-        int offset = block->stack.size() - ((int)info->inst - (int)Instruction::DUP1) - 1;
-        block->stack.push_back(block->stack[offset]);
-        return;
+    if(block->stack.size() == 0){
+        printf("stack is empty2!\n");
     }
-    if(info->inst > Instruction::SWAP1 && info->inst < Instruction::SWAP16){
-        auto last = block->stack.back();
-        int offset = block->stack.size() - ((int)info->inst - (int)Instruction::DUP1) - 2;
-        block->stack[block->stack.size()-1] = block->stack[offset];
-        block->stack[offset] = last;
-        return;
-    }
-    for(int i = 0; i < info->instInfo.args; i++)
-        block->stack.push_back(StackRegister{.type = 0xff,});
-    for(int i = 0; i < info->instInfo.ret; i++)
-        block->stack.pop_back();
+    //printf("ExecInstSimple-End: stack: %d\n", block->stack.size());
+    return ret;
+}
+
+void traverseBlock(BasicBlockInfo *block){
+    if(!block || block->walkedNode) return;
+    block->walkedNode = true;
+    traverseBlock(block->nextJUMPI);
+    traverseBlock(block->nextDefault);
+    for(auto n:block->nextProxy)
+        traverseBlock(n.second);
 }
 
 std::string g_str;
@@ -193,6 +230,7 @@ Contract::assignXrefToBlocks(
                         (prev->inst != Instruction::RETURN) &&
                         (prev->inst != Instruction::SUICIDE) &&
                         (prev->inst != Instruction::REVERT) &&
+                        (prev->inst != Instruction::INVALID) &&
                         (prev->inst != Instruction::JUMP) &&
                         (prev->inst != Instruction::JUMPI) &&
                         (prev->inst != Instruction::JUMPC) &&
@@ -237,22 +275,26 @@ Contract::assignXrefToBlocks(
             case Instruction::JUMPI:
             {
                 uint32_t fnAddrHash = 0;
-                if (instIndex >= 1) {
+                if (instIndex >= 2) {
                     OffsetInfo *prev = &m_instructions[instIndex - 1];
+                    OffsetInfo *eq = &m_instructions[instIndex - 2];
+                    
 
                     if ((prev->inst == Instruction::PUSH1) ||
                         (prev->inst == Instruction::PUSH2)) {
                         u256 data = prev->data;
                         uint32_t jmpDest = uint32_t(data);
 
-                        for (uint32_t j = 0; (j <= instIndex) && (j < 5); j += 1) {
-                            OffsetInfo *offFnHash = &m_instructions[instIndex - j];
+                        if(eq->inst == Instruction::EQ)
+                            for (uint32_t j = 0; (j <= instIndex) && (j < 5); j += 1) {
+                                OffsetInfo *offFnHash = &m_instructions[instIndex - j];
 
-                            if (offFnHash->inst == Instruction::PUSH4) {
-                                u256 data = offFnHash->data;
-                                fnAddrHash = uint32_t(data & 0xFFFFFFFF);
+                                if (offFnHash->inst == Instruction::PUSH4) {
+                                    u256 data = offFnHash->data;
+                                    fnAddrHash = uint32_t(data & 0xFFFFFFFF);
+                                    //printf("Find Public:%x %d\n", fnAddrHash, eq->offset);
+                                }
                             }
-                        }
                         addBlockReference((uint32_t)jmpDest, basicBlockOffset, nextInstrBlockSize, fnAddrHash, ConditionalNode);
                     }else{
                         // should not be happend
@@ -313,20 +355,25 @@ Contract::assignXrefToBlocks(
         uint32_t hash = func->second.fnAddrHash;
         if (!hash) continue; // only walk in public func
 
-        for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func){
-            func->second.stack.clear();
-            func->second.walkedNode = false;
-        }
+        printf("public: %x %x(%d)\n", hash, func->first, func->first);
 
-        const OffsetInfo& off = OffsetInfo{
-            .inst = Instruction::PUSH4,
-            .data = hash,
-        };
-        ExecInstSimple(&func->second, &off);
-        walkAndConnectNodes(hash, func->first);
+        for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func)
+            func->second.stack.clear();
+        vector<StackRegister> envStack;
+        envStack.push_back(StackRegister{.type=0x88, .value=hash});
+        //ExecInstSimple(&func->second);
+        walkAndConnectNodes(hash, func->first, &envStack);
     }
     //std::cout << g_str << '}' << std::endl;
     m_listbasicBlockInfo.erase(m_listbasicBlockInfo.find(NODE_DEADEND));
+    // if xxx else invalid
+
+    auto rootEntry = getBlockAt(0);
+    traverseBlock(rootEntry);
+    for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func) {
+        if(!func->second.walkedNode)
+            printf("orphan node: %x %s\n", func->second.offset, func->second.name.c_str());
+    }
 }
 
 void
@@ -497,41 +544,68 @@ Contract::getGraphvizJumpTo(unsigned int src, unsigned int dest, bool dstIfTrue,
 void
 Contract::walkAndConnectNodes(
     uint32_t _hash,
-    uint32_t _block
+    uint32_t _block,
+    const vector<StackRegister>* calleeStack
 )
 {
-    //printf("_hash:%08x block:%08x\n", _hash, _block);
-    //
+    // 动态节点通过静态节点穿透来简介影响运行流程
     uint32_t next = _block;
+    //printf("---hash = 0x%x, block = 0x%x\n", _hash, _block);
     while (true) {
         auto block = m_listbasicBlockInfo.find(next); // getBlockAt()
         if (block == m_listbasicBlockInfo.end()){
             printf("block not found:%08x\n", next);
             break;
         }
-        next = block->second.dstDefault;
-		if (block->second.walkedNode) break;
-        block->second.walkedNode = true;
 
-        // printf("hash = 0x%x, block = 0x%x, default = 0x%x, JUMPI = 0x%x\n", _hash, _block, block->second.dstDefault, block->second.dstJUMPI);
+        auto& entryStack = block->second.entryStack;
+        if (find(entryStack.begin(), entryStack.end(), *calleeStack) != entryStack.end()){
+            break;
+        }
+        entryStack.push_back(*calleeStack);
+
+        next = block->second.dstDefault;
+
+        block->second.stack = *calleeStack;
+        uint32_t dest = ExecInstSimple(&block->second);
+
+        //printf("hash = 0x%x, block = 0x%x, default = 0x%x, JUMPI = 0x%x\n", _hash, block->first, block->second.dstDefault, block->second.dstJUMPI);
         bool jumpIf = false;
         if (block->second.dstJUMPI){
             jumpIf = true;
             g_str += getGraphvizJumpTo(block->first, block->second.dstJUMPI, true, true);
-            walkAndConnectNodes(_hash, block->second.dstJUMPI);
+            // save stack?
+            auto backup = block->second.stack;
+            walkAndConnectNodes(_hash, block->second.dstJUMPI, &block->second.stack);
+            block->second.stack = backup;
+            if (!next) {
+                printf("jumpi shoud not be empty\n");
+                break;
+            }
+            calleeStack = &block->second.stack;
+            continue;
+            // exec defalut and continue
         }
 
         if (!next) break;
+        calleeStack = &block->second.stack;
         g_str += getGraphvizJumpTo(block->first, next, jumpIf, false);
         if (next == NODE_DEADEND) {
-            printf("next == NODE_DEADEND\n");
-            auto exitNode = m_exitNodesByHash.find(_hash); // getBlockAt()
-            if (exitNode != m_exitNodesByHash.end()) {
-                block->second.dstDefault = exitNode->second;
+            //if(block->second.dstJUMPI)
+            //    printf("JumpI DeatNode!\n");
+            if (dest != 0)
+            {
+                if(dest != next){
+                    printf("found different dest:%x(%d) %x(%d)\n", dest, dest, next, next);
+                }
+                
+                addBlockReference(dest, block->first, block->second.size, block->second.fnAddrHash, ProxyNode);
+                // addreference
+                next = dest;
+                if(!block->second.nextProxy[dest]) printf("found dest: %x %p\n", next, block->second.nextProxy[dest]);
+                continue;
             }
-
-            block->second.nextDefault = getBlockAt(block->second.dstDefault);
-		    break; // next
+            printf("next == NODE_DEADEND\n");
         }
     }
 }
@@ -611,7 +685,8 @@ Contract::addBlockReference(
    auto it = m_listbasicBlockInfo.find(_block);
    if (it != m_listbasicBlockInfo.end()) {
        Xref ref = { _src, _conditional };
-
+       if(it->second.references.find(_src) != it->second.references.end())
+          printf("addBlockReference repeat: %x=>%x\n", _src, _block);
        it->second.references.insert(it->second.references.begin(), pair<uint32_t, Xref>(_src, ref));
        it->second.fnAddrHash = _fnAddrHash;
        srcRefAdded = true;
@@ -628,6 +703,13 @@ Contract::addBlockReference(
        if (_conditional == NodeType::ConditionalNode) {
            it->second.nextJUMPI = getBlockAt(_block);
            it->second.dstJUMPI = _block;
+       }else if(_conditional == NodeType::ProxyNode){
+            if(it->second.nextProxy.find(_block) == it->second.nextProxy.end()){
+                it->second.dstProxy.push_back(_block);
+                auto proxy = getBlockAt(_block);
+                if(!proxy) printf("Proxy not found!%x\n", _block);
+                it->second.nextProxy.insert(it->second.nextProxy.begin(), pair<uint32_t, _BasicBlockInfo*>(_block, proxy));
+            }
        } else {
            it->second.nextDefault = getBlockAt(_block);
            it->second.dstDefault = _block;
@@ -729,7 +811,8 @@ Contract::getGraphNodeColor(
 
 string
 Contract::getGraphviz(
-    uint32_t _flag
+    uint32_t _flag,
+    bool skipRevert
 )
 {
     // DEBUG
@@ -744,6 +827,8 @@ Contract::getGraphviz(
     graph += "node[shape = record];\n";
 
     for (auto it = m_listbasicBlockInfo.begin(); it != m_listbasicBlockInfo.end(); ++it) {
+        if(skipRevert && (it->second.name == "REVERT" || it->second.name == "INVALID"))
+            continue;
         uint32_t source = it->first;
         string source_str = porosity::to_hstring(source);
         uint32_t dstIfTrue = it->second.dstJUMPI;
@@ -765,10 +850,28 @@ Contract::getGraphviz(
             basicBlockCode = symbolName;
 
         graph += "    \"" + source_str + "\"" "[label = \"" + basicBlockCode + "\"];\n";
-        if (dstDefault) {
-            graph += "    \"" + source_str + "\"" + " -> " + "\"" + dstDefault_str + "\"" + " [color=\""+ defaultColor +"\"];\n";
+        if (dstDefault == NODE_DEADEND){
+            for(int i = 0; i < it->second.dstProxy.size(); i++){
+                uint32_t next = it->second.dstProxy[i];
+                auto nextBlock = getBlockAt(next);
+                if(skipRevert && (nextBlock->name == "REVERT" || nextBlock->name == "INVALID")) continue;
+                string next_str = porosity::to_hstring(next);
+                defaultColor = "blue";
+                graph += "    \"" + source_str + "\"" + " -> " + "\"" + next_str + "\"" + " [color=\""+ defaultColor +"\"];\n";
+            }
+        }else if (dstDefault) {
+            auto nextBlock = getBlockAt(dstDefault);
+            bool dst = true;
+            if(skipRevert && (nextBlock->name == "REVERT" || nextBlock->name == "INVALID")) dst = false;
+
+            if(dstDefault == 0xe7)
+                printf("-------dstname:%s dst:%d\n", nextBlock->name.c_str(), dst);
+                
+            if(dst) graph += "    \"" + source_str + "\"" + " -> " + "\"" + dstDefault_str + "\"" + " [color=\""+ defaultColor +"\"];\n";
         }
         if (dstIfTrue) {
+            auto nextBlock = getBlockAt(dstIfTrue);
+            if(skipRevert && (nextBlock->name == "REVERT" || nextBlock->name == "INVALID")) continue;
             graph += "    \"" + source_str + "\"" + " -> " + "\"" + ifTrue_str + "\"" +
                      " [color=\"green\"" + optLabelName + "];\n";
         }
