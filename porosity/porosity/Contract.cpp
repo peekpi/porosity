@@ -370,12 +370,13 @@ Contract::assignXrefToBlocks(
     auto rootEntry = getBlockAt(0);
     traverseBlock(rootEntry);
     int orphan = 0;
-    for (auto func = m_listbasicBlockInfo.begin(); func != m_listbasicBlockInfo.end(); ++func) {
+    for (auto it = m_listbasicBlockInfo.begin(); it != m_listbasicBlockInfo.end();) {
+        auto func = it++;
         if(!func->second.walkedNode){
             printf("orphan node: %x %s\n", func->second.offset, func->second.name.c_str());
             orphan++;
+            m_listbasicBlockInfo.erase(func);
         }
-        m_listbasicBlockInfo.erase(func);
     }
     if(orphan>1)
         printf("the contract may have Inline Assembly\n");
