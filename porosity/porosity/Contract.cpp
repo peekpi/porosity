@@ -421,20 +421,24 @@ Contract::computeDominators(
     int nBlocks = m_listbasicBlockInfo.size();
     int maxbits = 8*sizeof(((_BasicBlockInfo*)0)->dominators)/256*256;
     if (nBlocks > maxbits) printf("nBlocks(%d) > %d!\n", nBlocks, maxbits);
-    uint32_t i = 0;
 
+    #define DominatorType decltype(((_BasicBlockInfo*)0)->dominators)
+    const DominatorType one = 1;
+    const DominatorType bits0xff = (one<<nBlocks)-1;
+    //cout << "bits0xff:" << bits0xff.str(0, std::ios_base::hex).c_str() << " nb:" << nBlocks << endl;;
+    uint32_t i = 0;
     for (auto block = m_listbasicBlockInfo.begin();
          block != m_listbasicBlockInfo.end();
          ++block) {
         block->second.id = i++;
-
-        for (int j = 0; j < nBlocks; j++) block->second.dominators |= (1 << j);
+        //for (int j = 0; j < nBlocks; j++) block->second.dominators |= (1 << j);
+        block->second.dominators = bits0xff;
     }
 
     m_listbasicBlockInfo[0].dominators = 0;
-    m_listbasicBlockInfo[0].dominators |= (1 << m_listbasicBlockInfo[0].id);
+    m_listbasicBlockInfo[0].dominators |= (one << m_listbasicBlockInfo[0].id);
 
-    decltype(((_BasicBlockInfo*)0)->dominators) T; // 1024bits
+    DominatorType T; // 1024bits
 
     bool changed = false;
     do {
@@ -456,7 +460,7 @@ Contract::computeDominators(
                     if (!predBlock){ printf("why?\n"); break;}
                     // CFG 程序流图 支配关系 ???
                     block->second.dominators &= predBlock->dominators;
-                    block->second.dominators |= (1 << block->second.id);
+                    block->second.dominators |= (one << block->second.id);
 
                     if (block->second.dominators != T) changed = true;
                 }
@@ -464,6 +468,11 @@ Contract::computeDominators(
             }
 
     } while (changed);
+
+    for(auto n:m_listbasicBlockInfo){
+        if((n.second.dominators & 1) == 0)
+            cout << "no dominators:" << n.second.offset << " name:" << n.second.name << " d:" << n.second.dominators.str(0, ios_base::hex) << endl;
+    }
 }
 
 bool
