@@ -227,7 +227,7 @@ void dev::eth::eachInstruction(
         if (isValidInstruction(instr))
             additional = instructionInfo(instr).additional;
         else {
-            printf("Invalid instruction(%x:0x%02x). Aborting... size:%d\n", std::distance(_mem.begin(), it), instr, _mem.size());
+            printf("Invalid instruction(%lx:0x%02hhx). Aborting... size:%lu\n", std::distance(_mem.begin(), it), instr, _mem.size());
             return;
         }
 

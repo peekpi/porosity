@@ -137,14 +137,25 @@ uint32_t ExecInstSimple(BasicBlockInfo* block){
                 ret = (uint32_t)dest.value;
             else
                 printf("dest type %d:%x %s\n", dest.offset, dest.type, dest.name.c_str());
-            if(it+1 != block->instructions.end())
-                printf("wrong iterator!\n");
         }
         for(int i = 0; i < info->instInfo.args; i++)
             block->stack.pop_back();
         for(int i = 0; i < info->instInfo.ret; i++)
             block->stack.push_back(StackRegister{.type = 0xff});
             //block->stack.push_back(StackRegister{.name=info->instInfo.name,.type = 0xff,.offset=info->offset});
+        switch(info->inst) {
+            case Instruction::JUMP:
+            case Instruction::JUMPI:
+            case Instruction::REVERT:
+            case Instruction::INVALID:
+            case Instruction::RETURN:
+            case Instruction::STOP:
+            case Instruction::SUICIDE:
+                if(it+1 != block->instructions.end())
+                    printf("wrong iterator!\n");
+            default:
+                break;
+        }
     }
     //printf("ExecInstSimple-End: stack: %d\n", block->stack.size());
     return ret;
@@ -263,7 +274,7 @@ Contract::assignXrefToBlocks(
             {
                 basicBlockOffset = currentOffset;
                 tagBasicBlock(basicBlockOffset, "INVALID");
-                setBlockSize(basicBlockOffset, nextInstrBlockSize);
+                setBlockSize(basicBlockOffset, currentEndOffset-basicBlockOffset);
                 break;
             }
             case Instruction::JUMPI:
@@ -339,6 +350,7 @@ Contract::assignXrefToBlocks(
         }
     }
 
+    // put code in block, the walk step need
     addInstructionsToBlocks();
     //
     // Reconnect to exit nodes.
@@ -370,8 +382,10 @@ Contract::assignXrefToBlocks(
     auto rootEntry = getBlockAt(0);
     traverseBlock(rootEntry);
     int orphan = 0;
+    int codeSize = 0;
     for (auto it = m_listbasicBlockInfo.begin(); it != m_listbasicBlockInfo.end();) {
         auto func = it++;
+        codeSize += func->second.size;
         if(!func->second.walkedNode){
             printf("orphan node: %x %s\n", func->second.offset, func->second.name.c_str());
             orphan++;
@@ -380,6 +394,8 @@ Contract::assignXrefToBlocks(
     }
     if(orphan>1)
         printf("the contract may have Inline Assembly\n");
+    if(codeSize != m_byteCodeRuntime.size())
+        printf("some code not skip!:%d %lu\n", codeSize, m_byteCodeRuntime.size());
 }
 
 void
@@ -721,6 +737,8 @@ Contract::addBlockReference(
        }
        it->second.size = _blockSize;
        dstRefAdded = true;
+   }else{
+       printf("XREF SRC node not found! %08x\n", _src);
    }
 
    return (dstRefAdded && srcRefAdded);

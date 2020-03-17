@@ -312,7 +312,7 @@ VMState::executeInstruction(
 
             stringstream exp;
             string value = "";
-            int gasLimit = int(GetStackEntryById(0).value);
+            uint64_t gasLimit = uint64_t(GetStackEntryById(0).value);
             int callType = int(GetStackEntryById(1).value);
 
             if (GetStackEntryById(1).type & RegTypeLabelCaller) {
