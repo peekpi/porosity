@@ -170,7 +170,7 @@ typedef struct _BasicBlockInfo
 
     bool visited;
     bool walkedNode;
-    u256 dominators;
+    u1024 dominators;
 
     ConditionAttribute condAttr;
     vector<InstructionState> instructions;

@@ -419,7 +419,8 @@ Contract::computeDominators(
     void
 ) {
     int nBlocks = m_listbasicBlockInfo.size();
-    if (nBlocks > 256) printf("nBlocks(%d) > 256!\n", nBlocks);
+    int maxbits = 8*sizeof(((_BasicBlockInfo*)0)->dominators)/256*256;
+    if (nBlocks > maxbits) printf("nBlocks(%d) > %d!\n", nBlocks, maxbits);
     uint32_t i = 0;
 
     for (auto block = m_listbasicBlockInfo.begin();
@@ -433,7 +434,7 @@ Contract::computeDominators(
     m_listbasicBlockInfo[0].dominators = 0;
     m_listbasicBlockInfo[0].dominators |= (1 << m_listbasicBlockInfo[0].id);
 
-    u256 T;
+    decltype(((_BasicBlockInfo*)0)->dominators) T; // 1024bits
 
     bool changed = false;
     do {
