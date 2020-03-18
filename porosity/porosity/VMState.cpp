@@ -143,6 +143,11 @@ VMState::executeInstruction(
     bool permission2Fork
 ) {
     InstructionInfo info = dev::eth::instructionInfo(_instr);
+    if(m_stack.size() < info.args){
+        printf("m_stack is not enough: %lu<%d\n", m_stack.size(), info.args);
+        return false;
+    }
+    int stackEndSize = m_stack.size() - info.args + info.ret;
 
     if (!dev::eth::isValidInstruction(_instr)) {
         printf("%02X                    !INVALID!", int(_instr));
@@ -200,21 +205,16 @@ VMState::executeInstruction(
             StackRegister reg = { "", "", UserInput, 0, 0 };
 
             reg.type = UserInput;
-            uint32_t offset = uint32_t(m_stack[0].value);
+            const StackRegister& arg = m_stack[0];
+            if(arg.type != Constant)
+                printf("access calldata via %d %d\n", arg.type, (uint32_t)arg.value);
+            uint32_t offset = uint32_t(arg.value);
             reg.offset = offset;
 
-            if (m_data.size()) {
-                if (offset + 31 < m_data.size())
-                    reg.value = (u256)*(h256 const*)(m_data.data() + (size_t)offset);
-                else if (reg.value >= m_data.size())
-                    reg.value = u256(0); // invalid
-                    printf("need paddind zero!\n");
-            }
-            else {
-                //
-                // In case the caller didn't provide any input parameters
-                //
-            }
+            if (offset + 31 < m_data.size())
+                reg.value = (u256)*(h256 const*)(m_data.data() + (size_t)offset);
+            else if (reg.value >= m_data.size())
+                reg.value = u256(0); // invalid
 
             stringstream argname;
             argname << "arg_";
@@ -299,10 +299,6 @@ VMState::executeInstruction(
         }
         case Instruction::CALL:
         {
-            if (m_stack.size() < 6) {
-                printf("*** ERROR *** STACK UNDERFLOW (%lu elements < 6)\n", m_stack.size());
-                return false;
-            }
             // Stack[0] = gas limit (default = 0x2540B5EF0)
             // Stack[1] = caller (e.g. msg.sender)
             // Stack[2] = value
@@ -589,7 +585,7 @@ VMState::executeInstruction(
                 m_eip = uint32_t(m_stack[0].value);
                 popStack();
             }
-            return true;
+            break;
         break;
         case Instruction::JUMPI:
         {
@@ -614,7 +610,7 @@ VMState::executeInstruction(
                     // Resume execution.
                     if (g_VerboseLevel > 4) printf("**** FORK END****\n");
                     m_eip = jmpTarget;
-                    return true;
+                    break;
                 }
                 else {
                     if (g_VerboseLevel > 4) printf("**** FORK BEGIN****\n");
@@ -629,7 +625,7 @@ VMState::executeInstruction(
                     // resume execution.
                     if (g_VerboseLevel > 4) printf("**** FORK END****\n");
                     m_eip = nextInstr;
-                    return true;
+                    break;
                 }
             }
             break;
@@ -641,10 +637,10 @@ VMState::executeInstruction(
         case Instruction::STOP:
         case Instruction::SUICIDE:
             // done
-            return false;
+            break;
         break;
         case Instruction::RETURN:
-            return false;
+            break;
         break;
         case Instruction::PC:
         {
@@ -707,6 +703,11 @@ VMState::executeInstruction(
     if (m_stack.size()) m_stack[0].lastModificationPC = m_eip;
     m_eip += sizeof(Instruction) + info.additional;
 
+    if(stackEndSize != m_stack.size()){
+        printf("%s: %s exec wrong:%lu != %d\n", __FUNCTION__, info.name.c_str(), m_stack.size(), stackEndSize);
+        return false;
+    }
+
     return true;
 }
 
@@ -759,6 +760,7 @@ VMState::isEndOfBlock(
         case Instruction::SUICIDE:
         case Instruction::RETURN:
         case Instruction::STOP:
+        case Instruction::REVERT:
         case Instruction::INVALID:
             return true;
         break;
@@ -794,39 +796,40 @@ VMState::executeBlock(
         }
     }
 
-    for (auto opcde = _block->instructions.begin(); opcde != _block->instructions.end(); ++opcde) {
+    for (auto opcode = _block->instructions.begin(); opcode != _block->instructions.end(); ++opcode) {
 
         // resolve expression
-        InstructionContext instrCxt(opcde->offInfo.inst, m_stack);
+        InstructionContext instrCxt(opcode->offInfo.inst, m_stack);
         instrCxt.getCurrentExpression();
-        if (g_SingleStepping || (g_VerboseLevel >= 2)) porosity::printInstruction(opcde->offInfo.offset, opcde->offInfo.inst, opcde->offInfo.data);
-        opcde->stack = instrCxt.m_stack; // make sure to save the stack for each instruction
-        m_stack = opcde->stack;
+        if (g_SingleStepping || (g_VerboseLevel >= 2)) porosity::printInstruction(opcode->offInfo.offset, opcode->offInfo.inst, opcode->offInfo.data);
+        opcode->stack = instrCxt.m_stack; // make sure to save the stack for each instruction
+        m_stack = opcode->stack;
 
-        if (isEndOfBlock(opcde->offInfo.inst)) {
-            if (opcde->offInfo.inst == Instruction::JUMP) {
+        if (isEndOfBlock(opcode->offInfo.inst)) {
+            if (opcode->offInfo.inst == Instruction::JUMP) {
                 // printf("Execute basic block\n");
                 if (!_block->dstDefault) {
                     result = false;
                     break;
                 }
 
-                if ((opcde->stack.size() && (opcde->stack[0].value != _block->dstDefault)) || (_block->dstDefault == uint32_t(NODE_DEADEND))) {
-                    uint32_t newDest = uint32_t(opcde->stack[0].value);
-                    if (g_VerboseLevel >= 2) printf("ERR: Invalid destionation. (0x%08X -> 0x%08X)\n", _block->dstDefault, newDest);
+                if ((opcode->stack.size() && (opcode->stack[0].value != _block->dstDefault)) || (_block->dstDefault == uint32_t(NODE_DEADEND))) {
+                    uint32_t newDest = uint32_t(opcode->stack[0].value);
+                    if(_block->nextProxy.count(newDest) == 0)
+                        printf("ERR: Invalid destionation. (0x%08X -> 0x%08X)\n", _block->dstDefault, newDest);
                     _block->dstDefault = newDest;
                     _block->nextDefault = getBlockAt(newDest);
                 }
             }
-            else if (opcde->offInfo.inst == Instruction::JUMPI) {
+            else if (opcode->offInfo.inst == Instruction::JUMPI) {
                 if (!_block->dstJUMPI) {
                     result = false;
                     break;
                 }
 
-                if ((opcde->stack.size() && opcde->stack[0].value != _block->dstJUMPI)) {
-                    uint32_t newDest = uint32_t(opcde->stack[0].value);
-                    if (g_VerboseLevel >= 2) printf("ERR: Invalid destionation. (0x%08X -> 0x%08X)\n", _block->dstJUMPI, newDest);
+                if ((opcode->stack.size() && opcode->stack[0].value != _block->dstJUMPI)) {
+                    uint32_t newDest = uint32_t(opcode->stack[0].value);
+                    printf("ERR: Invalid JUMPI destionation. (0x%08X -> 0x%08X)\n", _block->dstJUMPI, newDest);
                     _block->dstJUMPI = newDest;
                     _block->nextJUMPI = getBlockAt(newDest);
                 }
@@ -838,7 +841,7 @@ VMState::executeBlock(
         }
 
         // Flags
-        switch (opcde->offInfo.inst) {
+        switch (opcode->offInfo.inst) {
             case Instruction::CALL:
             {
                 _block->InheritFlags |= NoMoreSSTORE;
@@ -849,7 +852,7 @@ VMState::executeBlock(
                 break;
         }
 
-        bool ret = executeInstruction(opcde->offInfo.offset, opcde->offInfo.inst, opcde->offInfo.data, false);
+        bool ret = executeInstruction(opcode->offInfo.offset, opcode->offInfo.inst, opcode->offInfo.data, false);
     }
 
     _block->visited = true;

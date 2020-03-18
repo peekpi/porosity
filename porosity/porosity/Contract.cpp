@@ -1342,7 +1342,10 @@ Contract::decompile(
     newState.m_basicBlocks = &m_listbasicBlockInfo;
 
     BasicBlockInfo *block = getBlockAt(offset);
+    newState.pushStack(StackRegister{.name="msg.sig", .type = Constant, .value=_hash});
+    printf("exec block:%x\n", block);
     newState.executeFunction(block); // get stack status
+    printf("exec block-end:%x\n", block);
     computeDominators(); // again? or just repeat?
 
     do {
